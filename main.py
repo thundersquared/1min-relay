@@ -466,6 +466,7 @@ def transform_response(one_min_response, request_data, prompt_token):
                     "role": "assistant",
                     "content": one_min_response['aiRecord']["aiRecordDetail"]["resultObject"][0],
                 },
+                "logprobs": None,
                 "finish_reason": "stop"
             }
         ],
@@ -485,6 +486,7 @@ def stream_response(response, request_data, model, prompt_tokens):
     all_content = ""
     completion_id = f"chatcmpl-{uuid.uuid4()}"
     current_event = None
+    role_sent = False
 
     for line in response.iter_lines():
         if not line:
@@ -503,6 +505,21 @@ def stream_response(response, request_data, model, prompt_tokens):
                     data = json.loads(data_str)
                     content = data.get('content', '')
                     all_content += content
+                    if not role_sent:
+                        role_chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": model,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"role": "assistant", "content": ""},
+                                "logprobs": None,
+                                "finish_reason": None
+                            }]
+                        }
+                        yield f"data: {json.dumps(role_chunk)}\n\n"
+                        role_sent = True
                     chunk = {
                         "id": completion_id,
                         "object": "chat.completion.chunk",
@@ -511,6 +528,7 @@ def stream_response(response, request_data, model, prompt_tokens):
                         "choices": [{
                             "index": 0,
                             "delta": {"content": content},
+                            "logprobs": None,
                             "finish_reason": None
                         }]
                     }
@@ -529,7 +547,8 @@ def stream_response(response, request_data, model, prompt_tokens):
                     "model": model,
                     "choices": [{
                         "index": 0,
-                        "delta": {"content": ""},
+                        "delta": {},
+                        "logprobs": None,
                         "finish_reason": "stop"
                     }],
                     "usage": {
@@ -555,7 +574,8 @@ def stream_response(response, request_data, model, prompt_tokens):
                     "model": model,
                     "choices": [{
                         "index": 0,
-                        "delta": {"content": ""},
+                        "delta": {},
+                        "logprobs": None,
                         "finish_reason": "stop"
                     }]
                 }
