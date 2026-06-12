@@ -170,20 +170,20 @@ image_generation_models = [
 ]
 
 
-# Default values
-SUBSET_OF_ONE_MIN_PERMITTED_MODELS = ["mistral-nemo", "gpt-4o", "deepseek-chat"]
-PERMIT_MODELS_FROM_SUBSET_ONLY = False
+# Read environment variables (with defaults)
+SUBSET_OF_ONE_MIN_PERMITTED_MODELS = os.getenv(
+    "SUBSET_OF_ONE_MIN_PERMITTED_MODELS",
+    "mistral-nemo,gpt-4o,deepseek-chat"
+).split(",")  # e.g. "mistral-nemo,gpt-4o,deepseek-chat"
 
-# Read environment variables
-one_min_models_env = os.getenv("SUBSET_OF_ONE_MIN_PERMITTED_MODELS")  # e.g. "mistral-nemo,gpt-4o,deepseek-chat"
-permit_not_in_available_env = os.getenv("PERMIT_MODELS_FROM_SUBSET_ONLY")  # e.g. "True" or "False"
+PERMIT_MODELS_FROM_SUBSET_ONLY = os.getenv(
+    "PERMIT_MODELS_FROM_SUBSET_ONLY",
+    "False"
+).lower() == "true"  # e.g. "True" or "False"
 
-# Parse or fall back to defaults
-if one_min_models_env:
-    SUBSET_OF_ONE_MIN_PERMITTED_MODELS = one_min_models_env.split(",")
-
-if permit_not_in_available_env and permit_not_in_available_env.lower() == "true":
-    PERMIT_MODELS_FROM_SUBSET_ONLY = True
+# HTTP server bind config
+HOST = os.getenv("HOST", "0.0.0.0")
+PORT = int(os.getenv("PORT", 5001))
 
 # Combine into a single list
 AVAILABLE_MODELS = []
@@ -193,7 +193,7 @@ AVAILABLE_MODELS.extend(SUBSET_OF_ONE_MIN_PERMITTED_MODELS)
 def index():
     if request.method == 'GET':
         internal_ip = socket.gethostbyname(socket.gethostname())
-        return "Congratulations! Your API is working! You can now make requests to the API.\n\nEndpoint: " + internal_ip + ':5001/v1'
+        return "Congratulations! Your API is working! You can now make requests to the API.\n\nEndpoint: " + internal_ip + f':{PORT}/v1'
     return ERROR_HANDLER(1405)  # Default return for any other methods
 @app.route('/v1/models')
 @limiter.limit("500 per minute")
@@ -233,6 +233,44 @@ def ERROR_HANDLER(code, model=None, key=None):
     error_data = {k: v for k, v in error_codes.get(code, {"message": "Unknown error", "type": "unknown_error", "param": None, "code": None}).items() if k != "http_code"} # Remove http_code from the error data
     logger.error(f"An error has occurred while processing the user's request. Error code: {code}")
     return jsonify({"error": error_data}), error_codes.get(code, {}).get("http_code", 400) # Return the error data without http_code inside the payload and get the http_code to return.
+
+def handle_1min_error(response):
+    """
+    Surface upstream 1min.ai errors in an OpenAI-compatible error shape.
+
+    Falls back to the structured ERROR_HANDLER for known auth failures, and
+    otherwise extracts a meaningful message from the upstream response body so
+    callers can diagnose deprecated models, malformed requests, etc.
+    """
+    if response.status_code == 401:
+        return ERROR_HANDLER(1020)
+
+    # Try to extract a meaningful error message from 1min.ai's response
+    try:
+        error_json = response.json()
+        upstream_detail = (
+            error_json.get("message")
+            or error_json.get("error")
+            or error_json.get("detail")
+            or response.text[:500]
+        )
+    except (ValueError, AttributeError):
+        upstream_detail = response.text[:500] if response.text else "No response body"
+
+    logger.error(
+        "1min.ai request failed with status %s: %s",
+        response.status_code,
+        upstream_detail
+    )
+
+    error_data = {
+        "message": f"1min.ai API error ({response.status_code}): {upstream_detail}",
+        "type": "upstream_error",
+        "param": None,
+        "code": f"upstream_{response.status_code}",
+    }
+    return jsonify({"error": error_data}), response.status_code
+
 
 def format_conversation_history(messages, new_input):
     """
@@ -365,9 +403,8 @@ def conversation():
         # Non-Streaming Response
         logger.debug("Non-Streaming AI Response")
         response = requests.post(ONE_MIN_CHAT_API_URL, json=payload, headers=headers)
-        if response.status_code == 401:
-            return ERROR_HANDLER(1020)
-        response.raise_for_status()
+        if response.status_code != 200:
+            return handle_1min_error(response)
         one_min_response = response.json()
         
         transformed_response = transform_response(one_min_response, request_data, prompt_token)
@@ -381,10 +418,7 @@ def conversation():
         logger.debug("Streaming AI Response")
         response_stream = requests.post(ONE_MIN_CHAT_STREAMING_URL, data=json.dumps(payload), headers=headers, stream=True)
         if response_stream.status_code != 200:
-            if response_stream.status_code == 401:
-                return ERROR_HANDLER(1020)
-            logger.error(f"An unknown error occurred while processing the user's request. Error code: {response_stream.status_code}")
-            return ERROR_HANDLER(response_stream.status_code)
+            return handle_1min_error(response_stream)
         return Response(stream_response(response_stream, request_data, request_data.get('model', 'mistral-nemo'), int(prompt_token)), content_type='text/event-stream')
 
 @app.route('/v1/images/generations', methods=['POST', 'OPTIONS'])
@@ -589,12 +623,12 @@ if __name__ == '__main__':
     public_ip = response.text
     logger.info(f"""{printedcolors.Color.fg.lightcyan}  
 Server is ready to serve at:
-Internal IP: {internal_ip}:5001
+Internal IP: {internal_ip}:{PORT}
 Public IP: {public_ip} (only if you've setup port forwarding on your router.)
 Enter this url to OpenAI clients supporting custom endpoint:
-{internal_ip}:5001/v1
+{internal_ip}:{PORT}/v1
 If does not work, try:
-{internal_ip}:5001/v1/chat/completions
+{internal_ip}:{PORT}/v1/chat/completions
 {printedcolors.Color.reset}""")
-    serve(app, host='0.0.0.0', port=5001, threads=6) # Thread has a default of 4 if not specified. We use 6 to increase performance and allow multiple requests at once.
+    serve(app, host=HOST, port=PORT, threads=6) # Thread has a default of 4 if not specified. We use 6 to increase performance and allow multiple requests at once.
 
