@@ -8,8 +8,9 @@
     "helpers:pinGitHubActionDigests"
   ],
   "timezone": "Europe/Rome",
-  "schedule": ["before 6am on monday"],
   "labels": ["dependencies"],
+  "reviewers": ["anatolinicolae"],
+  "minimumReleaseAge": "6 hours",
   "prConcurrentLimit": 5,
   "rangeStrategy": "pin",
   "pip_requirements": {
