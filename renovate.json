@@ -9,7 +9,6 @@
   ],
   "timezone": "Europe/Rome",
   "labels": ["dependencies"],
-  "reviewers": ["anatolinicolae"],
   "minimumReleaseAge": "6 hours",
   "prConcurrentLimit": 5,
   "rangeStrategy": "pin",
