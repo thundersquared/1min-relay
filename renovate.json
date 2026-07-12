@@ -3,15 +3,23 @@
   "extends": [
     "config:recommended",
     ":dependencyDashboard",
-    ":semanticCommits",
+    ":semanticPrefixFixDepsChoreOthers",
+    "group:monorepos",
+    "group:recommended",
+    "workarounds:all",
     "docker:pinDigests",
     "helpers:pinGitHubActionDigests"
   ],
-  "timezone": "Europe/Rome",
   "labels": ["dependencies"],
   "minimumReleaseAge": "6 hours",
   "prConcurrentLimit": 5,
   "rangeStrategy": "pin",
+  "rebaseWhen": "conflicted",
+  "commitBodyTable": true,
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "automerge": true
+  },
   "pip_requirements": {
     "managerFilePatterns": ["/requirements\\.txt$/"]
   },
@@ -24,8 +32,9 @@
     },
     {
       "description": "Group GitHub Actions updates",
+      "groupName": "GitHub Actions",
       "matchManagers": ["github-actions"],
-      "groupName": "github actions"
+      "addLabels": ["github-actions"]
     },
     {
       "description": "Group Docker base image / compose updates",
@@ -37,9 +46,5 @@
       "matchUpdateTypes": ["minor", "patch", "digest"],
       "automerge": true
     }
-  ],
-  "vulnerabilityAlerts": {
-    "labels": ["security"],
-    "automerge": true
-  }
+  ]
 }
